@@ -1,0 +1,13 @@
+Detecting compiler hash for triplet x64-windows...
+Compiler found: C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.50.35717/bin/Hostx64/x64/cl.exe
+The following packages are already installed:
+    open62541[core,methodcalls,subscriptions,subscriptions-events]:x64-windows@1.4.14 -- git+https://github.com/microsoft/vcpkg@f50f1f5deb97ad70454ef0fdce0c0cfd9628430f
+  * vcpkg-cmake:x64-windows@2024-04-23 -- git+https://github.com/microsoft/vcpkg@e74aa1e8f93278a8e71372f1fa08c3df420eb840
+  * vcpkg-cmake-config:x64-windows@2024-05-23 -- git+https://github.com/microsoft/vcpkg@97a63e4bc1a17422ffe4eff71da53b4b561a7841
+open62541 provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(open62541 CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE open62541::open62541)
+
+All requested installations completed successfully in: 1.41 ms

@@ -1,0 +1,46 @@
+Package: vcpkg-cmake-config
+Version: 2024-05-23
+Architecture: x64-windows
+Multi-Arch: same
+Abi: c4107a5cbb59746d109eb6d45b03ede02a2e0d42553c813a2249f3bbf237369f
+Status: install ok installed
+
+Package: vcpkg-cmake
+Version: 2024-04-23
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 23016c2e4fcee78d344d3ff56b502d6a42682a61d570e3cea3a2406809ca7abf
+Status: install ok installed
+
+Package: open62541
+Version: 1.4.14
+Depends: open62541, vcpkg-cmake, vcpkg-cmake-config
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 008e5d7c3b1aa190cfff797f6f213f05238e56ba8a1e70e18c6409c356fd9525
+Description: open62541 is an open source C (C99) implementation of OPC UA licensed under the Mozilla Public License v2.0.
+Default-Features: methodcalls, subscriptions, subscriptions-events
+Status: install ok installed
+
+Package: open62541
+Feature: methodcalls
+Architecture: x64-windows
+Multi-Arch: same
+Description: Enable the Method service set
+Status: install ok installed
+
+Package: open62541
+Feature: subscriptions
+Architecture: x64-windows
+Multi-Arch: same
+Description: Enable subscriptions support
+Status: install ok installed
+
+Package: open62541
+Feature: subscriptions-events
+Depends: open62541
+Architecture: x64-windows
+Multi-Arch: same
+Description: Enable event monitoring
+Status: install ok installed
+

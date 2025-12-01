@@ -1,0 +1,8 @@
+[
+{
+  "directory": "C:/kursach_server/build",
+  "command": "C:/TDM-GCC-64/bin/g++.exe  @CMakeFiles/server.dir/includes_CXX.rsp  -o CMakeFiles/server.dir/server.cpp.obj -c C:/kursach_server/server.cpp",
+  "file": "C:/kursach_server/server.cpp",
+  "output": "CMakeFiles/server.dir/server.cpp.obj"
+}
+]

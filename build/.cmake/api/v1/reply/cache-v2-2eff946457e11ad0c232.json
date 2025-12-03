@@ -1319,10 +1319,10 @@
 				},
 				{
 					"name" : "HELPSTRING",
-					"value" : "The CMake toolchain file"
+					"value" : "No help, variable specified on the command line."
 				}
 			],
-			"type" : "FILEPATH",
+			"type" : "UNINITIALIZED",
 			"value" : "C:/Users/vadim/Documents/code/vcpkg/scripts/buildsystems/vcpkg.cmake"
 		},
 		{

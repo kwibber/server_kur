@@ -1,0 +1,5 @@
+.vscode/
+build/
+*.json
+save.cpp
+test.cpp

@@ -192,6 +192,21 @@ public:
         UA_Server_writeValue(server, nodeId, var);
         UA_Variant_clear(&var);
     }
+    
+    double readValue() {
+        UA_Variant var;
+        UA_Variant_init(&var);
+        UA_Server_readValue(server, nodeId, &var);
+        
+        if (var.type == &UA_TYPES[UA_TYPES_DOUBLE] && var.data != nullptr) {
+            double value = *static_cast<double*>(var.data);
+            UA_Variant_clear(&var);
+            return value;
+        }
+        
+        UA_Variant_clear(&var);
+        return 0.0;
+    }
 };
 
 // ============================== КЛАСС ПЕРЕМЕННОЙ В КАЧЕСТВЕ КОМПОНЕНТА ==============================
@@ -359,8 +374,49 @@ private:
     OPCUAComponentVariable* power;
     OPCUAComponentVariable* voltage;
     OPCUAComponentVariable* energyConsumption;
+    OPCUAComponentVariable* targetRPM;
+    OPCUAComponentVariable* rpmControlMode;
     std::mt19937 rng;
     double baseRPM;
+    double currentRPM;
+    bool manualControl;
+    double lastTargetRPM;
+    double lastControlMode;
+    
+    // Простой метод для обновления значений переменных при записи
+    void checkAndUpdateVariables() {
+        // Проверяем изменения в переменных targetRPM
+        if (targetRPM) {
+            double currentTarget = targetRPM->readValue();
+            if (fabs(currentTarget - lastTargetRPM) > 0.1) {
+                lastTargetRPM = currentTarget;
+                
+                // Ограничиваем допустимый диапазон оборотов
+                if (currentTarget < 0.0) currentTarget = 0.0;
+                if (currentTarget > 3000.0) currentTarget = 3000.0;
+                
+                std::cout << "Обнаружены новые целевые обороты: " << currentTarget << " об/мин" << std::endl;
+                baseRPM = currentTarget;
+                manualControl = true;
+                
+                // Переключаем режим на ручной
+                if (rpmControlMode) {
+                    rpmControlMode->writeValue(1.0);
+                    lastControlMode = 1.0;
+                }
+            }
+        }
+        
+        // Проверяем изменения в переменных rpmControlMode
+        if (rpmControlMode) {
+            double currentMode = rpmControlMode->readValue();
+            if (fabs(currentMode - lastControlMode) > 0.1) {
+                lastControlMode = currentMode;
+                manualControl = (currentMode == 1.0);
+                std::cout << "Обнаружено изменение режима: " << (manualControl ? "РУЧНОЙ" : "АВТО") << std::endl;
+            }
+        }
+    }
     
 public:
     Machine(UA_Server* srv, UA_UInt16 nsIndex)
@@ -368,10 +424,16 @@ public:
                      "Промышленный станок с электроприводом"),
           rng(std::random_device{}()),
           baseRPM(1500.0),
+          currentRPM(1500.0),
+          manualControl(false),
+          lastTargetRPM(1500.0),
+          lastControlMode(0.0),
           flywheelRPM(nullptr),
           power(nullptr),
           voltage(nullptr),
-          energyConsumption(nullptr) {
+          energyConsumption(nullptr),
+          targetRPM(nullptr),
+          rpmControlMode(nullptr) {
         
         // Создаем компоненты станка
         auto flywheelRPMVar = std::make_unique<OPCUAComponentVariable>(
@@ -390,24 +452,70 @@ public:
             srv, nsIndex, 204, "EnergyConsumption", "Потребление энергии", 
             "Потребление энергии (кВт·ч)", 56.3, nodeId);
         
+        auto targetRPMVar = std::make_unique<OPCUAComponentVariable>(
+            srv, nsIndex, 205, "TargetRPM", "Целевые обороты", 
+            "Заданные клиентом обороты (об/мин)", baseRPM, nodeId);
+        
+        auto controlModeVar = std::make_unique<OPCUAComponentVariable>(
+            srv, nsIndex, 206, "RPMControlMode", "Режим управления", 
+            "Режим управления оборотами (0=авто, 1=ручной)", 0.0, nodeId);
+        
         flywheelRPM = flywheelRPMVar.get();
         power = powerVar.get();
         voltage = voltageVar.get();
         energyConsumption = energyVar.get();
+        targetRPM = targetRPMVar.get();
+        rpmControlMode = controlModeVar.get();
         
         addComponent(std::move(flywheelRPMVar));
         addComponent(std::move(powerVar));
         addComponent(std::move(voltageVar));
         addComponent(std::move(energyVar));
+        addComponent(std::move(targetRPMVar));
+        addComponent(std::move(controlModeVar));
+    }
+    
+    void initialize() override {
+        OPCUADevice::initialize();
+        
+        // Вместо сложных callback-ов используем простое периодическое чтение
+        // Это работает, так как клиент записывает значения, а мы их читаем
     }
     
     void updateValues() override {
-        // Симуляция работы станка с небольшими флуктуациями
-        std::normal_distribution<double> rpmNoise(0.0, 10.0);
-        std::normal_distribution<double> powerNoise(0.0, 0.1);
+        // Проверяем изменения в переменных
+        checkAndUpdateVariables();
         
-        double rpm = std::max(0.0, baseRPM + rpmNoise(rng));
-        double pwr = 7.5 + powerNoise(rng);
+        double rpm;
+        
+        if (manualControl) {
+            // Ручной режим: плавно приближаемся к целевому значению
+            double delta = baseRPM - currentRPM;
+            double step = delta * 0.1; // Плавный переход 10% от разницы
+            
+            // Ограничиваем максимальную скорость изменения
+            if (step > 50.0) step = 50.0;
+            if (step < -50.0) step = -50.0;
+            
+            currentRPM += step;
+            
+            // Если близко к целевому значению, устанавливаем точно
+            if (fabs(baseRPM - currentRPM) < 1.0) {
+                currentRPM = baseRPM;
+            }
+            
+            rpm = currentRPM;
+        } else {
+            // Автоматический режим: симуляция с небольшими флуктуациями
+            std::normal_distribution<double> rpmNoise(0.0, 10.0);
+            rpm = std::max(0.0, baseRPM + rpmNoise(rng));
+            currentRPM = rpm;
+        }
+        
+        // Расчет других параметров в зависимости от оборотов
+        std::normal_distribution<double> powerNoise(0.0, 0.1);
+        double powerFactor = rpm / 1500.0; // Коэффициент мощности относительно номинала
+        double pwr = 7.5 * powerFactor + powerNoise(rng);
         double volt = 380.0 + (rng() % 20 - 10); // ±10V
         double energy = 56.3 + (pwr * 0.001); // Увеличиваем пропорционально мощности
         
@@ -416,12 +524,28 @@ public:
         if (voltage) voltage->writeValue(volt);
         if (energyConsumption) energyConsumption->writeValue(energy);
         
-        std::cout << "Станок: Обороты = " << rpm << " об/мин, Мощность = " << pwr 
-                  << " кВт, Напряжение = " << volt << " В, Энергия = " << energy << " кВт·ч" << std::endl;
+        // Режим работы для индикации
+        std::string modeStr = manualControl ? "РУЧНОЙ" : "АВТО";
+        std::cout << "Станок (" << modeStr << "): Обороты = " << rpm << " об/мин (цель: " << baseRPM 
+                  << "), Мощность = " << pwr << " кВт, Напряжение = " << volt 
+                  << " В, Энергия = " << energy << " кВт·ч" << std::endl;
     }
     
     void setBaseRPM(double rpm) {
-        baseRPM = rpm;
+        if (rpm >= 0.0 && rpm <= 3000.0) {
+            baseRPM = rpm;
+            manualControl = true;
+            lastTargetRPM = rpm;
+            lastControlMode = 1.0;
+            
+            if (targetRPM) {
+                targetRPM->writeValue(rpm);
+            }
+            
+            if (rpmControlMode) {
+                rpmControlMode->writeValue(1.0);
+            }
+        }
     }
 };
 
@@ -494,17 +618,14 @@ public:
         std::uniform_real_distribution<double> loadDist(20.0, 80.0);
         std::uniform_real_distribution<double> ramDist(30.0, 70.0);
         
-        double f1 = fanDist(rng);
-        double f2 = fanDist(rng);
-        double f3 = fanDist(rng);
         double cpu = loadDist(rng);
         double gpu = loadDist(rng);
         double ram = ramDist(rng);
         
         // Вентиляторы реагируют на загрузку
-        f1 = 1000 + cpu * 10;
-        f2 = 800 + (cpu + gpu) * 5;
-        f3 = 900 + (cpu * 0.7 + gpu * 0.3) * 8;
+        double f1 = 1000 + cpu * 10;
+        double f2 = 800 + (cpu + gpu) * 5;
+        double f3 = 900 + (cpu * 0.7 + gpu * 0.3) * 8;
         
         if (fan1) fan1->writeValue(f1);
         if (fan2) fan2->writeValue(f2);
@@ -587,7 +708,10 @@ public:
         std::cout << "   ├── Обороты маховика (ID: ns=" << namespaceIndex << ";i=201)" << std::endl;
         std::cout << "   ├── Мощность (ID: ns=" << namespaceIndex << ";i=202)" << std::endl;
         std::cout << "   ├── Напряжение (ID: ns=" << namespaceIndex << ";i=203)" << std::endl;
-        std::cout << "   └── Потребление энергии (ID: ns=" << namespaceIndex << ";i=204)" << std::endl;
+        std::cout << "   ├── Потребление энергии (ID: ns=" << namespaceIndex << ";i=204)" << std::endl;
+        std::cout << "   ├── Целевые обороты (ID: ns=" << namespaceIndex << ";i=205) - ДЛЯ ЗАПИСИ" << std::endl;
+        std::cout << "   └── Режим управления (ID: ns=" << namespaceIndex << ";i=206) - ДЛЯ ЗАПИСИ" << std::endl;
+        std::cout << "       (0=автоматический, 1=ручной)" << std::endl;
         
         std::cout << "\n3. Компьютер (ID: ns=" << namespaceIndex << ";i=300)" << std::endl;
         std::cout << "   ├── Вентилятор 1 (ID: ns=" << namespaceIndex << ";i=301)" << std::endl;
@@ -596,7 +720,13 @@ public:
         std::cout << "   ├── Загрузка ЦП (ID: ns=" << namespaceIndex << ";i=304)" << std::endl;
         std::cout << "   ├── Загрузка ГП (ID: ns=" << namespaceIndex << ";i=305)" << std::endl;
         std::cout << "   └── Использование ОЗУ (ID: ns=" << namespaceIndex << ";i=306)" << std::endl;
+        
         std::cout << "\n===========================================" << std::endl;
+        std::cout << "Инструкция по управлению станциком:" << std::endl;
+        std::cout << "1. Для ручного управления записать в TargetRPM значение от 0 до 3000" << std::endl;
+        std::cout << "2. Для переключения режима записать в RPMControlMode: 0=авто, 1=ручной" << std::endl;
+        std::cout << "3. Обороты плавно изменятся до заданного значения" << std::endl;
+        std::cout << "===========================================" << std::endl;
         std::cout << "Для остановки сервера нажмите Ctrl+C" << std::endl;
         std::cout << "===========================================\n" << std::endl;
         
@@ -633,6 +763,8 @@ public:
                 computer->updateValues();
             }
             
+            std::cout << "===========================================" << std::endl;
+            std::cout << "Для управления станциком используйте OPC UA клиент" << std::endl;
             std::cout << "===========================================" << std::endl;
             
             // Обрабатываем сетевые события

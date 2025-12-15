@@ -771,7 +771,7 @@ public:
             UA_Server_run_iterate(server, false);
             
             // Пауза между обновлениями
-            std::this_thread::sleep_for(std::chrono::milliseconds(330));
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }
     
@@ -858,7 +858,7 @@ int main() {
         
         // Ждем сигнала остановки в основном потоке
         while (globalRunning) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
         }
         
         // Останавливаем сервер

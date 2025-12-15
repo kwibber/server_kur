@@ -189,16 +189,19 @@ public:
         UA_Variant var;
         UA_Variant_init(&var);
         UA_Variant_setScalarCopy(&var, &value, &UA_TYPES[UA_TYPES_DOUBLE]);
-        UA_Server_writeValue(server, nodeId, var);
+        UA_StatusCode status = UA_Server_writeValue(server, nodeId, var);
+        if (status != UA_STATUSCODE_GOOD) {
+            std::cerr << "Failed to write value to node: " << UA_StatusCode_name(status) << std::endl;
+        }
         UA_Variant_clear(&var);
     }
     
     double readValue() {
         UA_Variant var;
         UA_Variant_init(&var);
-        UA_Server_readValue(server, nodeId, &var);
+        UA_StatusCode status = UA_Server_readValue(server, nodeId, &var);
         
-        if (var.type == &UA_TYPES[UA_TYPES_DOUBLE] && var.data != nullptr) {
+        if (status == UA_STATUSCODE_GOOD && var.type == &UA_TYPES[UA_TYPES_DOUBLE] && var.data != nullptr) {
             double value = *static_cast<double*>(var.data);
             UA_Variant_clear(&var);
             return value;
@@ -286,6 +289,11 @@ public:
             UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE),
             attr, NULL, NULL);
         
+        if (status != UA_STATUSCODE_GOOD) {
+            std::cerr << "Failed to add device node: " << UA_StatusCode_name(status) << std::endl;
+            return;
+        }
+        
         // Инициализируем все компоненты
         for (auto& component : components) {
             if (component) {
@@ -299,6 +307,10 @@ public:
     }
     
     virtual void updateValues() = 0;
+    
+    const UA_NodeId& getParentNodeId() const { return nodeId; }
+    std::string getBrowseName() const { return browseName; }
+    std::string getDisplayName() const { return displayName; }
 };
 
 // ============================== КЛАСС МУЛЬТИМЕТРА ==============================
@@ -364,6 +376,14 @@ public:
         
         std::cout << "Мультиметр: Напряжение = " << v << " В, Ток = " << c 
                   << " А, Сопротивление = " << r << " Ом, Мощность = " << p << " Вт" << std::endl;
+    }
+    
+    void printStatus() const {
+        std::cout << "Мультиметр создан с узлами:" << std::endl;
+        std::cout << "  - Напряжение (ns=1;i=101)" << std::endl;
+        std::cout << "  - Сила тока (ns=1;i=102)" << std::endl;
+        std::cout << "  - Сопротивление (ns=1;i=103)" << std::endl;
+        std::cout << "  - Мощность (ns=1;i=104)" << std::endl;
     }
 };
 
@@ -547,6 +567,16 @@ public:
             }
         }
     }
+    
+    void printStatus() const {
+        std::cout << "Станок создан с узлами:" << std::endl;
+        std::cout << "  - Обороты маховика (ns=1;i=201) - ДЛЯ ЧТЕНИЯ" << std::endl;
+        std::cout << "  - Мощность (ns=1;i=202) - ДЛЯ ЧТЕНИЯ" << std::endl;
+        std::cout << "  - Напряжение (ns=1;i=203) - ДЛЯ ЧТЕНИЯ" << std::endl;
+        std::cout << "  - Потребление энергии (ns=1;i=204) - ДЛЯ ЧТЕНИЯ" << std::endl;
+        std::cout << "  - Целевые обороты (ns=1;i=205) - ДЛЯ ЗАПИСИ" << std::endl;
+        std::cout << "  - Режим управления (ns=1;i=206) - ДЛЯ ЗАПИСИ" << std::endl;
+    }
 };
 
 // ============================== КЛАСС КОМПЬЮТЕРА ==============================
@@ -637,6 +667,16 @@ public:
         std::cout << "Компьютер: Вентиляторы = [" << f1 << ", " << f2 << ", " << f3 
                   << "] об/мин, ЦП = " << cpu << "%, ГП = " << gpu 
                   << "%, ОЗУ = " << ram << "%" << std::endl;
+    }
+    
+    void printStatus() const {
+        std::cout << "Компьютер создан с узлами:" << std::endl;
+        std::cout << "  - Вентилятор 1 (ns=1;i=301)" << std::endl;
+        std::cout << "  - Вентилятор 2 (ns=1;i=302)" << std::endl;
+        std::cout << "  - Вентилятор 3 (ns=1;i=303)" << std::endl;
+        std::cout << "  - Загрузка ЦП (ns=1;i=304)" << std::endl;
+        std::cout << "  - Загрузка ГП (ns=1;i=305)" << std::endl;
+        std::cout << "  - Использование ОЗУ (ns=1;i=306)" << std::endl;
     }
 };
 
@@ -788,14 +828,23 @@ public:
             machine.reset();
             multimeter.reset();
             
+            // Даем время для завершения операций
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            
             // Затем останавливаем и удаляем сервер
-            UA_Server_run_shutdown(server);
+            UA_StatusCode status = UA_Server_run_shutdown(server);
+            if (status != UA_STATUSCODE_GOOD) {
+                std::cerr << "Ошибка при остановке сервера: " << UA_StatusCode_name(status) << std::endl;
+            }
+            
             UA_Server_delete(server);
             server = nullptr;
             
             std::cout << "Сервер остановлен." << std::endl;
         }
     }
+    
+    bool isRunning() const { return running; }
     
 private:
     void initConsole() {
@@ -816,11 +865,16 @@ private:
 
 // ============================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ДЛЯ ОБРАБОТКИ СИГНАЛОВ ==============================
 std::atomic<bool> globalRunning(true);
+OPCUAServer* g_serverInstance = nullptr;
 
 void signalHandler(int signal) {
     (void)signal;
     std::cout << "\nПолучен сигнал остановки, останавливаю сервер..." << std::endl;
     globalRunning = false;
+    
+    if (g_serverInstance) {
+        g_serverInstance->stop();
+    }
 }
 
 // ============================== ТОЧКА ВХОДА ==============================
@@ -831,15 +885,39 @@ int main() {
     SetConsoleCP(CP_UTF8);
 #endif
     
+    std::cout << "===========================================" << std::endl;
     std::cout << "Запуск OPC UA сервера..." << std::endl;
+    std::cout << "Версия: 1.0" << std::endl;
+    std::cout << "===========================================\n" << std::endl;
     
     // Устанавливаем обработчики сигналов
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
     
+#ifdef _WIN32
+    SetConsoleCtrlHandler([](DWORD ctrlType) -> BOOL {
+        switch (ctrlType) {
+            case CTRL_C_EVENT:
+                std::cout << "\nПолучен Ctrl+C. Завершение работы..." << std::endl;
+                break;
+            case CTRL_BREAK_EVENT:
+                std::cout << "\nПолучен Ctrl+Break. Завершение работы..." << std::endl;
+                break;
+            case CTRL_CLOSE_EVENT:
+                std::cout << "\nЗакрытие консоли. Завершение работы..." << std::endl;
+                break;
+            default:
+                break;
+        }
+        signalHandler(0);
+        return TRUE;
+    }, TRUE);
+#endif
+    
     try {
         // Создаем и запускаем сервер
         OPCUAServer server;
+        g_serverInstance = &server;
         
         if (!server.initialize()) {
             std::cerr << "Ошибка инициализации сервера!" << std::endl;
@@ -857,7 +935,7 @@ int main() {
         });
         
         // Ждем сигнала остановки в основном потоке
-        while (globalRunning) {
+        while (globalRunning && server.isRunning()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(300));
         }
         
@@ -869,11 +947,19 @@ int main() {
             serverThread.join();
         }
         
+        std::cout << "\n===========================================" << std::endl;
+        std::cout << "Сервер успешно завершил работу." << std::endl;
+        std::cout << "===========================================" << std::endl;
+        
     } catch (const std::exception& e) {
-        std::cerr << "Исключение: " << e.what() << std::endl;
+        std::cerr << "\nИсключение: " << e.what() << std::endl;
+        return 1;
+    } catch (...) {
+        std::cerr << "\nНеизвестное исключение" << std::endl;
         return 1;
     }
     
-    std::cout << "Сервер завершил работу успешно." << std::endl;
+    g_serverInstance = nullptr;
+    
     return 0;
 }

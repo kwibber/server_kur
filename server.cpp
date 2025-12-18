@@ -197,19 +197,16 @@ public:
     }
     
     double readValue() {
-        UA_Variant var;
-        UA_Variant_init(&var);
-        UA_StatusCode status = UA_Server_readValue(server, nodeId, &var);
-        
-        if (status == UA_STATUSCODE_GOOD && var.type == &UA_TYPES[UA_TYPES_DOUBLE] && var.data != nullptr) {
-            double value = *static_cast<double*>(var.data);
-            UA_Variant_clear(&var);
-            return value;
-        }
-        
-        UA_Variant_clear(&var);
-        return 0.0;
+    UA_Variant var;
+    UA_Variant_init(&var);
+    UA_StatusCode status = UA_Server_readValue(server, nodeId, &var);
+    double value = 0.0;
+    if (status == UA_STATUSCODE_GOOD && var.type == &UA_TYPES[UA_TYPES_DOUBLE] && var.data) {
+        value = *static_cast<double*>(var.data);
     }
+    UA_Variant_clear(&var);
+    return value;
+}
 };
 
 // ============================== КЛАСС ПЕРЕМЕННОЙ В КАЧЕСТВЕ КОМПОНЕНТА ==============================
@@ -314,6 +311,13 @@ public:
 };
 
 // ============================== КЛАСС МУЛЬТИМЕТРА ==============================
+
+double smoothStep(std::mt19937& rng, double current, double minVal, double maxVal, double maxStep) {
+    std::uniform_real_distribution<double> dist(-maxStep, maxStep);
+    double next = current + dist(rng);
+    return std::clamp(next, minVal, maxVal);
+}
+
 class Multimeter : public OPCUADevice {
 private:
     OPCUAComponentVariable* voltage;
@@ -321,69 +325,56 @@ private:
     OPCUAComponentVariable* resistance;
     OPCUAComponentVariable* power;
     std::mt19937 rng;
-    
+
 public:
     Multimeter(UA_Server* srv, UA_UInt16 nsIndex)
-        : OPCUADevice(srv, nsIndex, 100, "Multimeter", "Мультиметр", 
-                     "Электрический измерительный прибор"),
+        : OPCUADevice(srv, nsIndex, 100, "Multimeter", "Мультиметр", "Электрический измерительный прибор"),
           rng(std::random_device{}()),
-          voltage(nullptr),
-          current(nullptr),
-          resistance(nullptr),
-          power(nullptr) {
-        
-        // Создаем компоненты мультиметра
+          voltage(nullptr), current(nullptr), resistance(nullptr), power(nullptr)
+    {
+        // Создание компонентов мультиметра
         auto voltageVar = std::make_unique<OPCUAComponentVariable>(
-            srv, nsIndex, 101, "Voltage", "Напряжение", 
-            "Измеренное напряжение (Вольты)", 220.0, nodeId);
-        
+            srv, nsIndex, 101, "Voltage", "Напряжение", "Измеренное напряжение (Вольты)", 220.0, nodeId);
         auto currentVar = std::make_unique<OPCUAComponentVariable>(
-            srv, nsIndex, 102, "Current", "Сила тока", 
-            "Измеренная сила тока (Амперы)", 5.0, nodeId);
-        
+            srv, nsIndex, 102, "Current", "Сила тока", "Измеренная сила тока (Амперы)", 5.0, nodeId);
         auto resistanceVar = std::make_unique<OPCUAComponentVariable>(
-            srv, nsIndex, 103, "Resistance", "Сопротивление", 
-            "Измеренное сопротивление (Омы)", 44.0, nodeId);
-        
+            srv, nsIndex, 103, "Resistance", "Сопротивление", "Измеренное сопротивление (Омы)", 44.0, nodeId);
         auto powerVar = std::make_unique<OPCUAComponentVariable>(
-            srv, nsIndex, 104, "Power", "Мощность", 
-            "Расчетная мощность (Ватты)", 1100.0, nodeId);
-        
+            srv, nsIndex, 104, "Power", "Мощность", "Расчетная мощность (Ватты)", 1100.0, nodeId);
+
         voltage = voltageVar.get();
         current = currentVar.get();
         resistance = resistanceVar.get();
         power = powerVar.get();
-        
+
         addComponent(std::move(voltageVar));
         addComponent(std::move(currentVar));
         addComponent(std::move(resistanceVar));
         addComponent(std::move(powerVar));
     }
-    
+
     void updateValues() override {
-        std::uniform_real_distribution<double> voltageDist(190.0, 240.0);
-        std::uniform_real_distribution<double> currentDist(0.5, 15.0);
-        
-        double v = voltageDist(rng);
-        double c = currentDist(rng);
-        double r = (c > 0.1) ? v / c : 100.0; // R = U/I
-        double p = v * c; // P = U*I
-        
-        if (voltage) voltage->writeValue(v);
-        if (current) current->writeValue(c);
-        if (resistance) resistance->writeValue(r);
-        if (power) power->writeValue(p);
-        
-        std::cout << "Мультиметр: Напряжение = " << v << " В, Ток = " << c 
-                  << " А, Сопротивление = " << r << " Ом, Мощность = " << p << " Вт" << std::endl;
+        double v = smoothStep(rng, voltage->readValue(), 190.0, 240.0, 5.0);
+        double c = smoothStep(rng, current->readValue(), 0.5, 15.0, 0.5);
+        double r = (c > 0.1) ? v / c : 100.0;
+        double p = v * c;
+
+        voltage->writeValue(v);
+        current->writeValue(c);
+        resistance->writeValue(r);
+        power->writeValue(p);
+
+        std::cout << "Мультиметр: Напряжение = " << v << " В, Ток = " << c
+                << " А, Сопротивление = " << r << " Ом, Мощность = " << p << " Вт" << std::endl;
     }
-    
+
+
     void printStatus() const {
         std::cout << "Мультиметр создан с узлами:" << std::endl;
-        std::cout << "  - Напряжение (ns=1;i=101)" << std::endl;
-        std::cout << "  - Сила тока (ns=1;i=102)" << std::endl;
-        std::cout << "  - Сопротивление (ns=1;i=103)" << std::endl;
-        std::cout << "  - Мощность (ns=1;i=104)" << std::endl;
+        std::cout << " - Напряжение (ns=1;i=101)" << std::endl;
+        std::cout << " - Сила тока (ns=1;i=102)" << std::endl;
+        std::cout << " - Сопротивление (ns=1;i=103)" << std::endl;
+        std::cout << " - Мощность (ns=1;i=104)" << std::endl;
     }
 };
 
@@ -396,38 +387,31 @@ private:
     OPCUAComponentVariable* energyConsumption;
     OPCUAComponentVariable* targetRPM;
     OPCUAComponentVariable* rpmControlMode;
+
     std::mt19937 rng;
-    double baseRPM;
-    double currentRPM;
+    double baseRPM;       // целевые обороты
+    double currentRPM;    // текущие обороты
     bool manualControl;
     double lastTargetRPM;
     double lastControlMode;
-    
-    // Простой метод для обновления значений переменных при записи
+
     void checkAndUpdateVariables() {
-        // Проверяем изменения в переменных targetRPM
+        // Проверка изменения targetRPM
         if (targetRPM) {
             double currentTarget = targetRPM->readValue();
             if (fabs(currentTarget - lastTargetRPM) > 0.1) {
                 lastTargetRPM = currentTarget;
-                
-                // Ограничиваем допустимый диапазон оборотов
-                if (currentTarget < 0.0) currentTarget = 0.0;
-                if (currentTarget > 3000.0) currentTarget = 3000.0;
-                
-                std::cout << "Обнаружены новые целевые обороты: " << currentTarget << " об/мин" << std::endl;
+                currentTarget = std::clamp(currentTarget, 0.0, 3000.0);
                 baseRPM = currentTarget;
                 manualControl = true;
-                
-                // Переключаем режим на ручной
                 if (rpmControlMode) {
                     rpmControlMode->writeValue(1.0);
                     lastControlMode = 1.0;
                 }
+                std::cout << "Обнаружены новые целевые обороты: " << currentTarget << " об/мин" << std::endl;
             }
         }
-        
-        // Проверяем изменения в переменных rpmControlMode
+        // Проверка изменения rpmControlMode
         if (rpmControlMode) {
             double currentMode = rpmControlMode->readValue();
             if (fabs(currentMode - lastControlMode) > 0.1) {
@@ -437,56 +421,37 @@ private:
             }
         }
     }
-    
+
 public:
     Machine(UA_Server* srv, UA_UInt16 nsIndex)
-        : OPCUADevice(srv, nsIndex, 200, "Machine", "Станок", 
-                     "Промышленный станок с электроприводом"),
+        : OPCUADevice(srv, nsIndex, 200, "Machine", "Станок", "Промышленный станок с электроприводом"),
           rng(std::random_device{}()),
-          baseRPM(1500.0),
-          currentRPM(1500.0),
-          manualControl(false),
-          lastTargetRPM(1500.0),
-          lastControlMode(0.0),
-          flywheelRPM(nullptr),
-          power(nullptr),
-          voltage(nullptr),
-          energyConsumption(nullptr),
-          targetRPM(nullptr),
-          rpmControlMode(nullptr) {
-        
-        // Создаем компоненты станка
+          baseRPM(1500.0), currentRPM(1500.0), manualControl(false),
+          lastTargetRPM(1500.0), lastControlMode(0.0),
+          flywheelRPM(nullptr), power(nullptr), voltage(nullptr), energyConsumption(nullptr),
+          targetRPM(nullptr), rpmControlMode(nullptr)
+    {
+        // Создание компонентов
         auto flywheelRPMVar = std::make_unique<OPCUAComponentVariable>(
-            srv, nsIndex, 201, "FlywheelRPM", "Обороты маховика", 
-            "Скорость вращения маховика (об/мин)", baseRPM, nodeId);
-        
+            srv, nsIndex, 201, "FlywheelRPM", "Обороты маховика", "Скорость вращения маховика (об/мин)", baseRPM, nodeId);
         auto powerVar = std::make_unique<OPCUAComponentVariable>(
-            srv, nsIndex, 202, "Power", "Мощность", 
-            "Потребляемая мощность (кВт)", 7.5, nodeId);
-        
+            srv, nsIndex, 202, "Power", "Мощность", "Потребляемая мощность (кВт)", 7.5, nodeId);
         auto voltageVar = std::make_unique<OPCUAComponentVariable>(
-            srv, nsIndex, 203, "Voltage", "Напряжение", 
-            "Рабочее напряжение (Вольты)", 380.0, nodeId);
-        
+            srv, nsIndex, 203, "Voltage", "Напряжение", "Рабочее напряжение (Вольты)", 380.0, nodeId);
         auto energyVar = std::make_unique<OPCUAComponentVariable>(
-            srv, nsIndex, 204, "EnergyConsumption", "Потребление энергии", 
-            "Потребление энергии (кВт·ч)", 56.3, nodeId);
-        
+            srv, nsIndex, 204, "EnergyConsumption", "Потребление энергии", "Потребление энергии (кВт·ч)", 56.3, nodeId);
         auto targetRPMVar = std::make_unique<OPCUAComponentVariable>(
-            srv, nsIndex, 205, "TargetRPM", "Целевые обороты", 
-            "Заданные клиентом обороты (об/мин)", baseRPM, nodeId);
-        
+            srv, nsIndex, 205, "TargetRPM", "Целевые обороты", "Заданные клиентом обороты (об/мин)", baseRPM, nodeId);
         auto controlModeVar = std::make_unique<OPCUAComponentVariable>(
-            srv, nsIndex, 206, "RPMControlMode", "Режим управления", 
-            "Режим управления оборотами (0=авто, 1=ручной)", 0.0, nodeId);
-        
+            srv, nsIndex, 206, "RPMControlMode", "Режим управления", "0=авто, 1=ручной", 0.0, nodeId);
+
         flywheelRPM = flywheelRPMVar.get();
         power = powerVar.get();
         voltage = voltageVar.get();
         energyConsumption = energyVar.get();
         targetRPM = targetRPMVar.get();
         rpmControlMode = controlModeVar.get();
-        
+
         addComponent(std::move(flywheelRPMVar));
         addComponent(std::move(powerVar));
         addComponent(std::move(voltageVar));
@@ -494,88 +459,64 @@ public:
         addComponent(std::move(targetRPMVar));
         addComponent(std::move(controlModeVar));
     }
-    
-    void initialize() override {
-        OPCUADevice::initialize();
-        
-        // Вместо сложных callback-ов используем простое периодическое чтение
-        // Это работает, так как клиент записывает значения, а мы их читаем
-    }
-    
+
     void updateValues() override {
-        // Проверяем изменения в переменных
-        checkAndUpdateVariables();
-        
-        double rpm;
-        
-        if (manualControl) {
-            // Ручной режим: плавно приближаемся к целевому значению
-            double delta = baseRPM - currentRPM;
-            double step = delta * 0.1; // Плавный переход 10% от разницы
-            
-            // Ограничиваем максимальную скорость изменения
-            if (step > 50.0) step = 50.0;
-            if (step < -50.0) step = -50.0;
-            
-            currentRPM += step;
-            
-            // Если близко к целевому значению, устанавливаем точно
-            if (fabs(baseRPM - currentRPM) < 1.0) {
-                currentRPM = baseRPM;
-            }
-            
-            rpm = currentRPM;
-        } else {
-            // Автоматический режим: симуляция с небольшими флуктуациями
-            std::normal_distribution<double> rpmNoise(0.0, 10.0);
-            rpm = std::max(0.0, baseRPM + rpmNoise(rng));
-            currentRPM = rpm;
-        }
-        
-        // Расчет других параметров в зависимости от оборотов
-        std::normal_distribution<double> powerNoise(0.0, 0.1);
-        double powerFactor = rpm / 1500.0; // Коэффициент мощности относительно номинала
-        double pwr = 7.5 * powerFactor + powerNoise(rng);
-        double volt = 380.0 + (rng() % 20 - 10); // ±10V
-        double energy = 56.3 + (pwr * 0.001); // Увеличиваем пропорционально мощности
-        
-        if (flywheelRPM) flywheelRPM->writeValue(rpm);
-        if (power) power->writeValue(pwr);
-        if (voltage) voltage->writeValue(volt);
-        if (energyConsumption) energyConsumption->writeValue(energy);
-        
-        // Режим работы для индикации
-        std::string modeStr = manualControl ? "РУЧНОЙ" : "АВТО";
-        std::cout << "Станок (" << modeStr << "): Обороты = " << rpm << " об/мин (цель: " << baseRPM 
-                  << "), Мощность = " << pwr << " кВт, Напряжение = " << volt 
-                  << " В, Энергия = " << energy << " кВт·ч" << std::endl;
+    checkAndUpdateVariables(); // проверка TargetRPM и режима
+
+    // RPM
+    double rpm;
+    if (manualControl) {
+        double delta = baseRPM - currentRPM;
+        double step = std::clamp(delta * 0.1, -50.0, 50.0);
+        currentRPM += step;
+        if (fabs(baseRPM - currentRPM) < 1.0)
+            currentRPM = baseRPM;
+        rpm = currentRPM;
+    } else {
+        std::normal_distribution<double> rpmNoise(0.0, 10.0);
+        rpm = std::max(0.0, baseRPM + rpmNoise(rng));
+        currentRPM = rpm;
     }
-    
-    void setBaseRPM(double rpm) {
-        if (rpm >= 0.0 && rpm <= 3000.0) {
-            baseRPM = rpm;
-            manualControl = true;
-            lastTargetRPM = rpm;
-            lastControlMode = 1.0;
-            
-            if (targetRPM) {
-                targetRPM->writeValue(rpm);
-            }
-            
-            if (rpmControlMode) {
-                rpmControlMode->writeValue(1.0);
-            }
-        }
-    }
-    
+
+    // Мощность
+    double pwrMin = 0.0;
+    double pwrMax = 15.0;
+    double pwrMaxStep = 0.2;
+    double pwr = smoothStep(rng, power->readValue(), pwrMin, pwrMax, pwrMaxStep);
+
+    // Напряжение
+    double voltMin = 370.0;
+    double voltMax = 390.0;
+    double voltMaxStep = 2.0;
+    double volt = smoothStep(rng, voltage->readValue(), voltMin, voltMax, voltMaxStep);
+
+    // Энергопотребление
+    double energyMin = 50.0;
+    double energyMax = 60.0;
+    double energyMaxStep = 0.1;
+    double energy = smoothStep(rng, energyConsumption->readValue(), energyMin, energyMax, energyMaxStep);
+
+    if (flywheelRPM) flywheelRPM->writeValue(rpm);
+    if (power) power->writeValue(pwr);
+    if (voltage) voltage->writeValue(volt);
+    if (energyConsumption) energyConsumption->writeValue(energy);
+
+    std::string modeStr = manualControl ? "РУЧНОЙ" : "АВТО";
+    std::cout << "Станок (" << modeStr << "): Обороты = " << rpm
+              << " об/мин, Мощность = " << pwr
+              << " кВт, Напряжение = " << volt
+              << " В, Энергия = " << energy << " кВт·ч" << std::endl;
+}
+
+
     void printStatus() const {
         std::cout << "Станок создан с узлами:" << std::endl;
-        std::cout << "  - Обороты маховика (ns=1;i=201) - ДЛЯ ЧТЕНИЯ" << std::endl;
-        std::cout << "  - Мощность (ns=1;i=202) - ДЛЯ ЧТЕНИЯ" << std::endl;
-        std::cout << "  - Напряжение (ns=1;i=203) - ДЛЯ ЧТЕНИЯ" << std::endl;
-        std::cout << "  - Потребление энергии (ns=1;i=204) - ДЛЯ ЧТЕНИЯ" << std::endl;
-        std::cout << "  - Целевые обороты (ns=1;i=205) - ДЛЯ ЗАПИСИ" << std::endl;
-        std::cout << "  - Режим управления (ns=1;i=206) - ДЛЯ ЗАПИСИ" << std::endl;
+        std::cout << " - Обороты маховика (ns=1;i=201)" << std::endl;
+        std::cout << " - Мощность (ns=1;i=202)" << std::endl;
+        std::cout << " - Напряжение (ns=1;i=203)" << std::endl;
+        std::cout << " - Потребление энергии (ns=1;i=204)" << std::endl;
+        std::cout << " - Целевые обороты (ns=1;i=205) - ДЛЯ ЗАПИСИ" << std::endl;
+        std::cout << " - Режим управления (ns=1;i=206) - ДЛЯ ЗАПИСИ (0=авто,1=ручной)" << std::endl;
     }
 };
 
@@ -588,52 +529,37 @@ private:
     OPCUAComponentVariable* cpuLoad;
     OPCUAComponentVariable* gpuLoad;
     OPCUAComponentVariable* ramUsage;
+
     std::mt19937 rng;
-    
+
 public:
     Computer(UA_Server* srv, UA_UInt16 nsIndex)
-        : OPCUADevice(srv, nsIndex, 300, "Computer", "Компьютер", 
-                     "Системный блок с мониторингом параметров"),
+        : OPCUADevice(srv, nsIndex, 300, "Computer", "Компьютер", "Системный блок с мониторингом параметров"),
           rng(std::random_device{}()),
-          fan1(nullptr),
-          fan2(nullptr),
-          fan3(nullptr),
-          cpuLoad(nullptr),
-          gpuLoad(nullptr),
-          ramUsage(nullptr) {
-        
-        // Создаем компоненты компьютера
+          fan1(nullptr), fan2(nullptr), fan3(nullptr),
+          cpuLoad(nullptr), gpuLoad(nullptr), ramUsage(nullptr)
+    {
+        // Создание компонентов
         auto fan1Var = std::make_unique<OPCUAComponentVariable>(
-            srv, nsIndex, 301, "Fan1", "Вентилятор 1", 
-            "Скорость вентилятора ЦП (об/мин)", 1200.0, nodeId);
-        
+            srv, nsIndex, 301, "Fan1", "Вентилятор 1", "Скорость вентилятора ЦП (об/мин)", 1200.0, nodeId);
         auto fan2Var = std::make_unique<OPCUAComponentVariable>(
-            srv, nsIndex, 302, "Fan2", "Вентилятор 2", 
-            "Скорость вентилятора корпуса (об/мин)", 800.0, nodeId);
-        
+            srv, nsIndex, 302, "Fan2", "Вентилятор 2", "Скорость вентилятора корпуса (об/мин)", 800.0, nodeId);
         auto fan3Var = std::make_unique<OPCUAComponentVariable>(
-            srv, nsIndex, 303, "Fan3", "Вентилятор 3", 
-            "Скорость вентилятора блока питания (об/мин)", 1000.0, nodeId);
-        
+            srv, nsIndex, 303, "Fan3", "Вентилятор 3", "Скорость вентилятора блока питания (об/мин)", 1000.0, nodeId);
         auto cpuLoadVar = std::make_unique<OPCUAComponentVariable>(
-            srv, nsIndex, 304, "CPULoad", "Загрузка ЦП", 
-            "Загрузка центрального процессора (%)", 30.0, nodeId);
-        
+            srv, nsIndex, 304, "CPULoad", "Загрузка ЦП", "Загрузка центрального процессора (%)", 30.0, nodeId);
         auto gpuLoadVar = std::make_unique<OPCUAComponentVariable>(
-            srv, nsIndex, 305, "GPULoad", "Загрузка ГП", 
-            "Загрузка графического процессора (%)", 25.0, nodeId);
-        
+            srv, nsIndex, 305, "GPULoad", "Загрузка ГП", "Загрузка графического процессора (%)", 25.0, nodeId);
         auto ramUsageVar = std::make_unique<OPCUAComponentVariable>(
-            srv, nsIndex, 306, "RAMUsage", "Использование ОЗУ", 
-            "Использование оперативной памяти (%)", 45.0, nodeId);
-        
+            srv, nsIndex, 306, "RAMUsage", "Использование ОЗУ", "Использование оперативной памяти (%)", 45.0, nodeId);
+
         fan1 = fan1Var.get();
         fan2 = fan2Var.get();
         fan3 = fan3Var.get();
         cpuLoad = cpuLoadVar.get();
         gpuLoad = gpuLoadVar.get();
         ramUsage = ramUsageVar.get();
-        
+
         addComponent(std::move(fan1Var));
         addComponent(std::move(fan2Var));
         addComponent(std::move(fan3Var));
@@ -641,42 +567,36 @@ public:
         addComponent(std::move(gpuLoadVar));
         addComponent(std::move(ramUsageVar));
     }
-    
+
     void updateValues() override {
-        // Симуляция параметров компьютера
-        std::uniform_real_distribution<double> fanDist(800.0, 1800.0);
-        std::uniform_real_distribution<double> loadDist(20.0, 80.0);
-        std::uniform_real_distribution<double> ramDist(30.0, 70.0);
-        
-        double cpu = loadDist(rng);
-        double gpu = loadDist(rng);
-        double ram = ramDist(rng);
-        
-        // Вентиляторы реагируют на загрузку
-        double f1 = 1000 + cpu * 10;
-        double f2 = 800 + (cpu + gpu) * 5;
-        double f3 = 900 + (cpu * 0.7 + gpu * 0.3) * 8;
-        
-        if (fan1) fan1->writeValue(f1);
-        if (fan2) fan2->writeValue(f2);
-        if (fan3) fan3->writeValue(f3);
-        if (cpuLoad) cpuLoad->writeValue(cpu);
-        if (gpuLoad) gpuLoad->writeValue(gpu);
-        if (ramUsage) ramUsage->writeValue(ram);
-        
-        std::cout << "Компьютер: Вентиляторы = [" << f1 << ", " << f2 << ", " << f3 
-                  << "] об/мин, ЦП = " << cpu << "%, ГП = " << gpu 
-                  << "%, ОЗУ = " << ram << "%" << std::endl;
-    }
-    
+    double cpu = smoothStep(rng, cpuLoad->readValue(), 20.0, 80.0, 2.0);
+    double gpu = smoothStep(rng, gpuLoad->readValue(), 20.0, 80.0, 2.0);
+    double ram = smoothStep(rng, ramUsage->readValue(), 30.0, 70.0, 1.5);
+
+    double f1 = smoothStep(rng, fan1->readValue(), 800.0, 1800.0, 50.0);
+    double f2 = smoothStep(rng, fan2->readValue(), 800.0, 1800.0, 50.0);
+    double f3 = smoothStep(rng, fan3->readValue(), 800.0, 1800.0, 50.0);
+
+    cpuLoad->writeValue(cpu);
+    gpuLoad->writeValue(gpu);
+    ramUsage->writeValue(ram);
+    fan1->writeValue(f1);
+    fan2->writeValue(f2);
+    fan3->writeValue(f3);
+
+    std::cout << "Компьютер: Вентиляторы = [" << f1 << ", " << f2 << ", " << f3
+              << "], ЦП = " << cpu << "%, ГП = " << gpu << "%, ОЗУ = " << ram << "%" << std::endl;
+}
+
+
     void printStatus() const {
         std::cout << "Компьютер создан с узлами:" << std::endl;
-        std::cout << "  - Вентилятор 1 (ns=1;i=301)" << std::endl;
-        std::cout << "  - Вентилятор 2 (ns=1;i=302)" << std::endl;
-        std::cout << "  - Вентилятор 3 (ns=1;i=303)" << std::endl;
-        std::cout << "  - Загрузка ЦП (ns=1;i=304)" << std::endl;
-        std::cout << "  - Загрузка ГП (ns=1;i=305)" << std::endl;
-        std::cout << "  - Использование ОЗУ (ns=1;i=306)" << std::endl;
+        std::cout << " - Вентилятор 1 (ns=1;i=301)" << std::endl;
+        std::cout << " - Вентилятор 2 (ns=1;i=302)" << std::endl;
+        std::cout << " - Вентилятор 3 (ns=1;i=303)" << std::endl;
+        std::cout << " - Загрузка ЦП (ns=1;i=304)" << std::endl;
+        std::cout << " - Загрузка ГП (ns=1;i=305)" << std::endl;
+        std::cout << " - Использование ОЗУ (ns=1;i=306)" << std::endl;
     }
 };
 

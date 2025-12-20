@@ -16,7 +16,6 @@
 #include <windows.h>
 #endif
 
-// ============================== RAII ОБЕРТКИ ДЛЯ open62541 ==============================
 class UAString {
 private:
     UA_String str;
@@ -34,11 +33,9 @@ public:
         }
     }
     
-    // Запрещаем копирование
     UAString(const UAString&) = delete;
     UAString& operator=(const UAString&) = delete;
     
-    // Разрешаем перемещение
     UAString(UAString&& other) noexcept : str(other.str), ownsMemory(other.ownsMemory) {
         other.ownsMemory = false;
         other.str.data = nullptr;
@@ -69,13 +66,10 @@ public:
         UA_LocalizedText_clear(&text);
     }
     
-    // Запрещаем копирование
     UALocalizedText(const UALocalizedText&) = delete;
     UALocalizedText& operator=(const UALocalizedText&) = delete;
     
-    // Разрешаем перемещение
     UALocalizedText(UALocalizedText&& other) noexcept : text(other.text) {
-        // Обнуляем у перемещенного объекта, чтобы деструктор не освободил память
         other.text.locale.data = nullptr;
         other.text.locale.length = 0;
         other.text.text.data = nullptr;
@@ -100,13 +94,10 @@ public:
         UA_QualifiedName_clear(&name);
     }
     
-    // Запрещаем копирование
     UAQualifiedName(const UAQualifiedName&) = delete;
     UAQualifiedName& operator=(const UAQualifiedName&) = delete;
     
-    // Разрешаем перемещение
     UAQualifiedName(UAQualifiedName&& other) noexcept : name(other.name) {
-        // Обнуляем у перемещенного объекта
         other.name.name.data = nullptr;
         other.name.name.length = 0;
     }
@@ -115,7 +106,6 @@ public:
     const UA_QualifiedName* get() const { return &name; }
 };
 
-// ============================== БАЗОВЫЙ КЛАСС УЗЛА ==============================
 class OPCUANode {
 protected:
     UA_Server* server;
@@ -127,7 +117,6 @@ public:
     
     virtual ~OPCUANode() = default;
     
-    // Запрещаем копирование
     OPCUANode(const OPCUANode&) = delete;
     OPCUANode& operator=(const OPCUANode&) = delete;
     
@@ -137,7 +126,6 @@ public:
     virtual void initialize() = 0;
 };
 
-// ============================== КЛАСС ПЕРЕМЕННОЙ ==============================
 class OPCUAVariable : public OPCUANode {
 protected:
     std::string displayName;
@@ -158,7 +146,6 @@ public:
     virtual void initialize() override {
         UA_VariableAttributes attr = UA_VariableAttributes_default;
         
-        // Создаем локализованные строки
         UALocalizedText displayNameText("en-US", displayName.c_str());
         UALocalizedText descriptionText("en-US", description.c_str());
         UAQualifiedName qualifiedName(nodeId.namespaceIndex, browseName.c_str());
@@ -170,10 +157,8 @@ public:
         attr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
         attr.userAccessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
         
-        // Устанавливаем начальное значение
         UA_Variant_setScalarCopy(&attr.value, &initialValue, &UA_TYPES[UA_TYPES_DOUBLE]);
         
-        // Добавляем как переменную в ObjectsFolder
         UA_StatusCode status = UA_Server_addVariableNode(server, nodeId,
             UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER),
             UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
@@ -181,7 +166,6 @@ public:
             UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE),
             attr, NULL, NULL);
         
-        // Очищаем значение, так как оно было скопировано
         UA_Variant_clear(&attr.value);
     }
     
@@ -209,7 +193,6 @@ public:
 }
 };
 
-// ============================== КЛАСС ПЕРЕМЕННОЙ В КАЧЕСТВЕ КОМПОНЕНТА ==============================
 class OPCUAComponentVariable : public OPCUAVariable {
 private:
     UA_NodeId parentNodeId;
@@ -238,7 +221,6 @@ public:
         
         UA_Variant_setScalarCopy(&attr.value, &initialValue, &UA_TYPES[UA_TYPES_DOUBLE]);
         
-        // Добавляем как компонент родительского узла
         UA_StatusCode status = UA_Server_addVariableNode(server, nodeId,
             parentNodeId,
             UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
@@ -246,12 +228,10 @@ public:
             UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE),
             attr, NULL, NULL);
         
-        // Очищаем значение
         UA_Variant_clear(&attr.value);
     }
 };
 
-// ============================== КЛАСС УСТРОЙСТВА ==============================
 class OPCUADevice : public OPCUANode {
 protected:
     std::string displayName;
@@ -291,7 +271,6 @@ public:
             return;
         }
         
-        // Инициализируем все компоненты
         for (auto& component : components) {
             if (component) {
                 component->initialize();
@@ -310,7 +289,6 @@ public:
     std::string getDisplayName() const { return displayName; }
 };
 
-// ============================== КЛАСС МУЛЬТИМЕТРА ==============================
 
 double smoothStep(std::mt19937& rng, double current, double minVal, double maxVal, double maxStep) {
     std::uniform_real_distribution<double> dist(-maxStep, maxStep);
@@ -332,7 +310,6 @@ public:
           rng(std::random_device{}()),
           voltage(nullptr), current(nullptr), resistance(nullptr), power(nullptr)
     {
-        // Создание компонентов мультиметра
         auto voltageVar = std::make_unique<OPCUAComponentVariable>(
             srv, nsIndex, 101, "Voltage", "Напряжение", "Измеренное напряжение (Вольты)", 220.0, nodeId);
         auto currentVar = std::make_unique<OPCUAComponentVariable>(
@@ -378,7 +355,6 @@ public:
     }
 };
 
-// ============================== КЛАСС СТАНКА ==============================
 class Machine : public OPCUADevice {
 private:
     OPCUAComponentVariable* flywheelRPM;
@@ -389,14 +365,13 @@ private:
     OPCUAComponentVariable* rpmControlMode;
 
     std::mt19937 rng;
-    double baseRPM;       // целевые обороты
-    double currentRPM;    // текущие обороты
+    double baseRPM;
+    double currentRPM;
     bool manualControl;
     double lastTargetRPM;
     double lastControlMode;
 
     void checkAndUpdateVariables() {
-        // Проверка изменения targetRPM
         if (targetRPM) {
             double currentTarget = targetRPM->readValue();
             if (fabs(currentTarget - lastTargetRPM) > 0.1) {
@@ -411,7 +386,6 @@ private:
                 std::cout << "Обнаружены новые целевые обороты: " << currentTarget << " об/мин" << std::endl;
             }
         }
-        // Проверка изменения rpmControlMode
         if (rpmControlMode) {
             double currentMode = rpmControlMode->readValue();
             if (fabs(currentMode - lastControlMode) > 0.1) {
@@ -431,7 +405,6 @@ public:
           flywheelRPM(nullptr), power(nullptr), voltage(nullptr), energyConsumption(nullptr),
           targetRPM(nullptr), rpmControlMode(nullptr)
     {
-        // Создание компонентов
         auto flywheelRPMVar = std::make_unique<OPCUAComponentVariable>(
             srv, nsIndex, 201, "FlywheelRPM", "Обороты маховика", "Скорость вращения маховика (об/мин)", baseRPM, nodeId);
         auto powerVar = std::make_unique<OPCUAComponentVariable>(
@@ -461,9 +434,8 @@ public:
     }
 
     void updateValues() override {
-    checkAndUpdateVariables(); // проверка TargetRPM и режима
+    checkAndUpdateVariables();
 
-    // RPM
     double rpm;
     if (manualControl) {
         double delta = baseRPM - currentRPM;
@@ -478,19 +450,16 @@ public:
         currentRPM = rpm;
     }
 
-    // Мощность
     double pwrMin = 0.0;
     double pwrMax = 15.0;
     double pwrMaxStep = 0.2;
     double pwr = smoothStep(rng, power->readValue(), pwrMin, pwrMax, pwrMaxStep);
 
-    // Напряжение
     double voltMin = 370.0;
     double voltMax = 390.0;
     double voltMaxStep = 2.0;
     double volt = smoothStep(rng, voltage->readValue(), voltMin, voltMax, voltMaxStep);
 
-    // Энергопотребление
     double energyMin = 50.0;
     double energyMax = 60.0;
     double energyMaxStep = 0.1;
@@ -520,7 +489,6 @@ public:
     }
 };
 
-// ============================== КЛАСС КОМПЬЮТЕРА ==============================
 class Computer : public OPCUADevice {
 private:
     OPCUAComponentVariable* fan1;
@@ -539,7 +507,6 @@ public:
           fan1(nullptr), fan2(nullptr), fan3(nullptr),
           cpuLoad(nullptr), gpuLoad(nullptr), ramUsage(nullptr)
     {
-        // Создание компонентов
         auto fan1Var = std::make_unique<OPCUAComponentVariable>(
             srv, nsIndex, 301, "Fan1", "Вентилятор 1", "Скорость вентилятора ЦП (об/мин)", 1200.0, nodeId);
         auto fan2Var = std::make_unique<OPCUAComponentVariable>(
@@ -600,7 +567,6 @@ public:
     }
 };
 
-// ============================== КЛАСС СЕРВЕРА OPC UA ==============================
 class OPCUAServer {
 private:
     UA_Server* server;
@@ -619,28 +585,23 @@ public:
         stop();
     }
     
-    // Запрещаем копирование
     OPCUAServer(const OPCUAServer&) = delete;
     OPCUAServer& operator=(const OPCUAServer&) = delete;
     
     bool initialize() {
         std::cout << "OPC UA Server initializing..." << std::endl;
         
-        // Создаем сервер
         server = UA_Server_new();
         if (!server) {
             std::cerr << "Failed to create server" << std::endl;
             return false;
         }
         
-        // Настраиваем конфигурацию
         UA_ServerConfig* config = UA_Server_getConfig(server);
         UA_ServerConfig_setDefault(config);
         
-        // Добавляем пространство имен
         namespaceIndex = UA_Server_addNamespace(server, "EquipmentNamespace");
         
-        // Создаем устройства
         multimeter = std::make_unique<Multimeter>(server, namespaceIndex);
         multimeter->initialize();
         
@@ -690,7 +651,6 @@ public:
         std::cout << "Для остановки сервера нажмите Ctrl+C" << std::endl;
         std::cout << "===========================================\n" << std::endl;
         
-        // Запускаем сервер
         UA_StatusCode status = UA_Server_run_startup(server);
         if (status != UA_STATUSCODE_GOOD) {
             std::cerr << "Failed to start server: " << UA_StatusCode_name(status) << std::endl;
@@ -703,14 +663,12 @@ public:
     void run() {
         int counter = 0;
         while (running) {
-            // Очищаем экран для красивого вывода (только для Windows)
             clearConsole();
             
             std::cout << "===========================================" << std::endl;
             std::cout << "ЦИКЛ ОБНОВЛЕНИЯ: " << ++counter << std::endl;
             std::cout << "===========================================" << std::endl;
             
-            // Обновляем значения всех устройств
             if (multimeter) {
                 multimeter->updateValues();
             }
@@ -727,31 +685,26 @@ public:
             std::cout << "Для управления станциком используйте OPC UA клиент" << std::endl;
             std::cout << "===========================================" << std::endl;
             
-            // Обрабатываем сетевые события
             UA_Server_run_iterate(server, false);
             
-            // Пауза между обновлениями
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }
     
     void stop() {
-        if (!running) return; // Уже остановлен
+        if (!running) return;
         
         running = false;
         
         if (server) {
             std::cout << "\nОстановка сервера..." << std::endl;
             
-            // ВАЖНО: Сначала очищаем все узлы, которые ссылаются на сервер
             computer.reset();
             machine.reset();
             multimeter.reset();
             
-            // Даем время для завершения операций
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             
-            // Затем останавливаем и удаляем сервер
             UA_StatusCode status = UA_Server_run_shutdown(server);
             if (status != UA_STATUSCODE_GOOD) {
                 std::cerr << "Ошибка при остановке сервера: " << UA_StatusCode_name(status) << std::endl;
@@ -783,7 +736,6 @@ private:
     }
 };
 
-// ============================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ДЛЯ ОБРАБОТКИ СИГНАЛОВ ==============================
 std::atomic<bool> globalRunning(true);
 OPCUAServer* g_serverInstance = nullptr;
 
@@ -797,9 +749,7 @@ void signalHandler(int signal) {
     }
 }
 
-// ============================== ТОЧКА ВХОДА ==============================
 int main() {
-    // Инициализация консоли
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
@@ -810,7 +760,6 @@ int main() {
     std::cout << "Версия: 1.0" << std::endl;
     std::cout << "===========================================\n" << std::endl;
     
-    // Устанавливаем обработчики сигналов
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
     
@@ -835,7 +784,6 @@ int main() {
 #endif
     
     try {
-        // Создаем и запускаем сервер
         OPCUAServer server;
         g_serverInstance = &server;
         
@@ -849,20 +797,16 @@ int main() {
             return 1;
         }
         
-        // Основной цикл в отдельном потоке
         std::thread serverThread([&server]() {
             server.run();
         });
         
-        // Ждем сигнала остановки в основном потоке
         while (globalRunning && server.isRunning()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(300));
         }
         
-        // Останавливаем сервер
         server.stop();
         
-        // Ждем завершения потока сервера
         if (serverThread.joinable()) {
             serverThread.join();
         }
